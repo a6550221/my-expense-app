@@ -4,12 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>智慧記帳助手</title>
-    <!-- 載入核心套件 -->
+    <!-- 載入核心套件：確保版本相容 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 使用穩定的 Lucide 圖示版本 -->
     <script src="https://unpkg.com/lucide@0.321.0/dist/umd/lucide.min.js"></script>
+    <!-- 圖表套件 -->
     <script src="https://unpkg.com/recharts/umd/Recharts.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
@@ -18,33 +20,37 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         #root:empty { display: flex; justify-content: center; align-items: center; height: 100vh; background: #f8fafc; }
         #root:empty::after { content: "系統啟動中..."; color: #6366f1; font-weight: bold; }
+        .error-message { padding: 20px; color: #ef4444; text-align: center; }
     </style>
 </head>
 <body class="bg-slate-50">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useMemo } = React;
         const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } = Recharts;
 
         // --- 配置區域 ---
         const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyPmJnep8GKhqIpwkJgokekQpirRJFZRB-PRXD9QZVpx786tEVDxCOYi4bb7gsj5lyL/exec";
         const CATEGORIES = ['食物', '生活', '娛樂', '交通', '醫療', '教育', '其他'];
         const CURRENCIES = ['PHP', 'TWD', 'USD', 'HKD', 'JPY'];
-        const PAYMENT_METHODS = ['現金', '信用卡', '電子支付', '銀行轉帳'];
-        const COLORS = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#C9CBCF'];
+        const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#f43f5e', '#64748b'];
 
-        // 自定義圖示組件 (解決 UMD 版 Lucide 兼容問題)
+        // 自定義圖示組件：處理 lucide-umd 的非同步問題
         const Icon = ({ name, className = "w-6 h-6" }) => {
-            useEffect(() => { if (window.lucide) lucide.createIcons(); }, [name]);
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [name]);
             return <i data-lucide={name} className={className}></i>;
         };
 
         const App = () => {
             const [view, setView] = useState('dashboard');
             const [expenses, setExpenses] = useState([]);
-            const [loading, setLoading] = useState(false);
             const [syncing, setSyncing] = useState(false);
+            const [error, setError] = useState(null);
             
             const [formData, setFormData] = useState({
                 date: new Date().toISOString().split('T')[0],
@@ -52,9 +58,15 @@
                 currency: 'PHP', paymentMethod: '現金'
             });
 
+            // 初始化與錯誤攔截
             useEffect(() => {
-                const saved = localStorage.getItem('expenses_v2_data');
-                if (saved) setExpenses(JSON.parse(saved));
+                try {
+                    const saved = localStorage.getItem('expenses_v2_data');
+                    if (saved) setExpenses(JSON.parse(saved));
+                    if (window.lucide) window.lucide.createIcons();
+                } catch (e) {
+                    setError("載入資料失敗: " + e.message);
+                }
             }, []);
 
             const saveExpense = async (data) => {
@@ -70,8 +82,11 @@
                             mode: 'no-cors', 
                             body: JSON.stringify(data)
                         });
-                    } catch (e) { console.error(e); }
-                    setSyncing(false);
+                    } catch (e) { 
+                        console.error("GAS Sync Error:", e);
+                    } finally {
+                        setSyncing(false);
+                    }
                 }
                 setView('dashboard');
                 setFormData({
@@ -81,12 +96,16 @@
                 });
             };
 
-            const getCategoryData = () => {
+            const getCategoryData = useMemo(() => {
                 return CATEGORIES.map(cat => ({
                     name: cat,
                     value: expenses.filter(ex => ex.category === cat).reduce((s, c) => s + Number(c.amount), 0)
                 })).filter(d => d.value > 0);
-            };
+            }, [expenses]);
+
+            if (error) {
+                return <div className="error-message">{error}</div>;
+            }
 
             return (
                 <div className="min-h-screen bg-slate-50 pb-24">
@@ -94,14 +113,18 @@
                         <h1 className="text-xl font-black flex items-center gap-2">
                             <Icon name="dollar-sign" /> 智慧記帳助手
                         </h1>
-                        {view !== 'dashboard' && <button onClick={() => setView('dashboard')}><Icon name="x" /></button>}
+                        {view !== 'dashboard' && (
+                            <button onClick={() => setView('dashboard')} className="p-2 bg-white/10 rounded-full">
+                                <Icon name="x" className="w-5 h-5" />
+                            </button>
+                        )}
                     </header>
 
                     <main className="max-w-md mx-auto p-4">
                         {view === 'dashboard' && (
-                            <div className="space-y-6">
+                            <div className="space-y-6 animate-in fade-in duration-500">
                                 <div className="bg-white p-8 rounded-[2.5rem] shadow-sm text-center border border-slate-100">
-                                    <p className="text-slate-400 text-xs font-bold mb-2">本月累計支出 (PHP)</p>
+                                    <p className="text-slate-400 text-xs font-bold mb-2 uppercase tracking-widest">本月累計支出 (PHP)</p>
                                     <h2 className="text-5xl font-black text-indigo-600">
                                         ${expenses.filter(ex => ex.currency === 'PHP').reduce((s, c) => s + Number(c.amount), 0).toLocaleString()}
                                     </h2>
@@ -110,7 +133,7 @@
                                     <button onClick={() => setView('add')} className="bg-indigo-600 text-white p-6 rounded-[2rem] flex flex-col items-center gap-2 shadow-lg active:scale-95 transition-transform">
                                         <Icon name="plus" className="w-8 h-8" /><span className="font-bold">新增帳目</span>
                                     </button>
-                                    <button onClick={() => setView('analysis')} className="bg-white text-indigo-600 p-6 rounded-[2rem] border-2 border-indigo-50 flex flex-col items-center gap-2 active:scale-95 transition-transform">
+                                    <button onClick={() => setView('analysis')} className="bg-white text-indigo-600 p-6 rounded-[2rem] border-2 border-indigo-50 flex flex-col items-center gap-2 active:scale-95 transition-transform shadow-sm">
                                         <Icon name="pie-chart" className="w-8 h-8" /><span className="font-bold">消費分析</span>
                                     </button>
                                 </div>
@@ -123,73 +146,76 @@
                                                     <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold">{ex.category[0]}</div>
                                                     <div>
                                                         <p className="font-bold text-sm text-slate-700">{ex.merchant || ex.category}</p>
-                                                        <p className="text-[10px] text-slate-400">{ex.date}</p>
+                                                        <p className="text-[10px] text-slate-400 font-medium">{ex.date}</p>
                                                     </div>
                                                 </div>
                                                 <p className="font-black text-red-500">-{ex.currency} {Number(ex.amount).toLocaleString()}</p>
                                             </div>
                                         ))}
-                                        {expenses.length === 0 && <p className="text-center text-slate-300 py-10 text-sm">點擊下方 + 開始記帳 ✨</p>}
+                                        {expenses.length === 0 && <p className="text-center text-slate-300 py-10 text-sm">點擊下方「+」開始記帳 ✨</p>}
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         {view === 'add' && (
-                            <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-slate-100 space-y-5">
-                                <h2 className="text-center font-black text-xl text-slate-800">手動輸入</h2>
+                            <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-slate-100 space-y-5 animate-in slide-in-from-bottom-5 duration-500">
+                                <h2 className="text-center font-black text-xl text-slate-800">手動輸入支出</h2>
                                 <div className="space-y-4 mt-6">
                                     <div className="flex gap-2">
                                         <div className="w-24">
-                                            <label className="text-[10px] font-black text-slate-400">幣種</label>
-                                            <select value={formData.currency} onChange={e => setFormData({...formData, currency: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-sm font-black border-none">
+                                            <label className="text-[10px] font-black text-slate-400 ml-1">幣種</label>
+                                            <select value={formData.currency} onChange={e => setFormData({...formData, currency: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-sm font-black border-none focus:ring-2 focus:ring-indigo-500">
                                                 {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </div>
                                         <div className="flex-1">
-                                            <label className="text-[10px] font-black text-slate-400">金額</label>
-                                            <input type="number" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-2xl font-black border-none" placeholder="0.00" />
+                                            <label className="text-[10px] font-black text-slate-400 ml-1">金額</label>
+                                            <input type="number" inputMode="decimal" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-2xl font-black border-none focus:ring-2 focus:ring-indigo-500" placeholder="0.00" />
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="text-[10px] font-black text-slate-400">分類</label>
+                                            <label className="text-[10px] font-black text-slate-400 ml-1">分類</label>
                                             <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-sm font-bold border-none">
                                                 {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="text-[10px] font-black text-slate-400">日期</label>
+                                            <label className="text-[10px] font-black text-slate-400 ml-1">日期</label>
                                             <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-sm font-bold border-none" />
                                         </div>
                                     </div>
                                     <input type="text" placeholder="商家名稱" value={formData.merchant} onChange={e => setFormData({...formData, merchant: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold border-none" />
-                                    <textarea placeholder="備註..." value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-medium border-none h-24" />
+                                    <textarea placeholder="備註..." value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full p-4 bg-slate-50 rounded-2xl text-sm font-medium border-none h-24 no-scrollbar" />
                                     
                                     <button 
                                         onClick={() => saveExpense(formData)} 
                                         disabled={!formData.amount || syncing} 
-                                        className="w-full bg-indigo-600 text-white py-5 rounded-[1.5rem] font-black shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+                                        className="w-full bg-indigo-600 text-white py-5 rounded-[1.5rem] font-black shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-95 transition-transform disabled:opacity-50"
                                     >
-                                        {syncing ? "同步中..." : <><Icon name="save" /> 儲存帳目</>}
+                                        {syncing ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="save" />} 
+                                        儲存帳目並同步
                                     </button>
                                 </div>
                             </div>
                         )}
 
                         {view === 'analysis' && (
-                            <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-100">
-                                <h3 className="font-black text-center mb-4">支出分析</h3>
-                                <div className="h-64">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <PieChart>
-                                            <Pie data={getCategoryData()} innerRadius={60} outerRadius={80} paddingAngle={8} dataKey="value">
-                                                {getCategoryData().map((entry, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
-                                            </Pie>
-                                            <Tooltip />
-                                            <Legend />
-                                        </PieChart>
-                                    </ResponsiveContainer>
+                            <div className="space-y-6 animate-in zoom-in-95 duration-500">
+                                <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-100">
+                                    <h3 className="font-black text-center mb-6 text-slate-800">支出百分比</h3>
+                                    <div className="h-64">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie data={getCategoryData} innerRadius={60} outerRadius={80} paddingAngle={8} dataKey="value">
+                                                    {getCategoryData.map((entry, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                                                </Pie>
+                                                <Tooltip />
+                                                <Legend />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -197,7 +223,7 @@
 
                     <nav className="fixed bottom-6 left-6 right-6 bg-white/80 backdrop-blur-xl border border-white/20 px-8 py-4 rounded-[2.5rem] flex justify-between items-center z-50 shadow-2xl">
                         <button onClick={() => setView('dashboard')} className={view === 'dashboard' ? 'text-indigo-600' : 'text-slate-300'}><Icon name="layout-dashboard" /></button>
-                        <button onClick={() => setView('add')} className="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-xl -mt-12 border-4 border-slate-50"><Icon name="plus" /></button>
+                        <button onClick={() => setView('add')} className="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-xl -mt-12 border-4 border-slate-50 active:scale-90 transition-transform"><Icon name="plus" /></button>
                         <button onClick={() => setView('analysis')} className={view === 'analysis' ? 'text-indigo-600' : 'text-slate-300'}><Icon name="pie-chart" /></button>
                     </nav>
                 </div>
