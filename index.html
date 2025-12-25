@@ -25,7 +25,7 @@
     <div id="root">
         <div class="flex flex-col items-center justify-center h-screen">
             <div class="loading-spinner"></div>
-            <p class="mt-4 text-slate-400">正在加載穩定模組...</p>
+            <p class="mt-4 text-slate-400">正在檢查 API 權限...</p>
         </div>
     </div>
 
@@ -37,7 +37,10 @@
                 const { useState, useEffect, useMemo, useCallback } = React;
 
                 const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyPmJnep8GKhqIpwkJgokekQpirRJFZRB-PRXD9QZVpx786tEVDxCOYi4bb7gsj5lyL/exec";
-                const apiKey = ""; // 執行環境自動處理
+                
+                // 關鍵修正：確保 apiKey 讀取自環境變量，若為空則嘗試從 global 獲取
+                const apiKey = typeof __api_key !== 'undefined' ? __api_key : ""; 
+                
                 const CATEGORIES = ['食物', '生活', '娛樂', '交通', '醫療', '教育', '其他'];
                 const CURRENCIES = ['PHP', 'TWD', 'USD', 'HKD', 'JPY'];
 
@@ -81,26 +84,42 @@
                     const callGeminiAI = async (transcript) => {
                         setAiLoading(true);
                         setStatusMsg('AI 正在解析...');
+
+                        if (!apiKey && typeof __api_key === 'undefined') {
+                            setStatusMsg('錯誤：找不到 API Key');
+                            setAiLoading(false);
+                            return;
+                        }
+
                         try {
-                            const systemPrompt = "你是一個專業記帳助手。請從語音提取：金額(amount)、商家(merchant)、分類(category)。分類限從 [食物, 生活, 娛樂, 交通, 醫療, 教育, 其他] 挑選。回傳格式必須為純 JSON：{\"amount\": 數字, \"merchant\": \"字串\", \"category\": \"字串\"}";
+                            const systemPrompt = "你是一個專業記帳助手。從語音中提取：amount(數字)、merchant(字串)、category(選一:食物,生活,娛樂,交通,醫療,教育,其他)。回傳 JSON。";
                             
-                            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                            // 指數退避重試邏輯
+                            const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
+                                for (let i = 0; i < retries; i++) {
+                                    try {
+                                        const res = await fetch(url, options);
+                                        if (res.ok) return res;
+                                        if (res.status === 403) throw new Error("API Key 權限被拒絕 (403)");
+                                    } catch (err) {
+                                        if (i === retries - 1) throw err;
+                                        await new Promise(r => setTimeout(r, backoff * Math.pow(2, i)));
+                                    }
+                                }
+                            };
+
+                            const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    contents: [{ parts: [{ text: `語音內容：「${transcript}」` }] }],
+                                    contents: [{ parts: [{ text: `語音：「${transcript}」` }] }],
                                     systemInstruction: { parts: [{ text: systemPrompt }] }
                                 })
                             });
 
-                            if (!response.ok) {
-                                throw new Error(`API 錯誤: ${response.status}`);
-                            }
-
                             const result = await response.json();
                             const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
                             
-                            // 強化 JSON 提取邏輯
                             const jsonMatch = text.match(/\{[\s\S]*\}/);
                             if (jsonMatch) {
                                 const parsed = JSON.parse(jsonMatch[0]);
@@ -109,15 +128,13 @@
                                     amount: parsed.amount || prev.amount,
                                     merchant: parsed.merchant || prev.merchant,
                                     category: CATEGORIES.includes(parsed.category) ? parsed.category : prev.category,
-                                    note: `語音自動填入: ${transcript}`
+                                    note: `語音識別：${transcript}`
                                 }));
-                                setStatusMsg('解析成功！');
-                            } else {
-                                setStatusMsg('解析失敗：格式不正確');
+                                setStatusMsg('解析成功');
                             }
                         } catch (e) {
-                            console.error("AI 解析錯誤:", e);
-                            setStatusMsg(`解析錯誤: ${e.message}`);
+                            console.error("解析失敗", e);
+                            setStatusMsg(`失敗: ${e.message}`);
                         } finally {
                             setAiLoading(false);
                             setTimeout(() => setStatusMsg(''), 3000);
@@ -127,23 +144,17 @@
                     const startSpeech = useCallback(() => {
                         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                         if (!SpeechRecognition) {
-                            setStatusMsg('瀏覽器不支援語音');
+                            setStatusMsg('不支援語音');
                             return;
                         }
 
                         const recognition = new SpeechRecognition();
                         recognition.lang = 'zh-TW';
-                        
                         recognition.onstart = () => setIsListening(true);
                         recognition.onend = () => setIsListening(false);
-                        recognition.onerror = (e) => setStatusMsg(`語音錯誤: ${e.error}`);
-                        
-                        recognition.onresult = (event) => {
-                            const transcript = event.results[0][0].transcript;
-                            callGeminiAI(transcript);
-                        };
+                        recognition.onresult = (event) => callGeminiAI(event.results[0][0].transcript);
                         recognition.start();
-                    }, [apiKey]);
+                    }, []);
 
                     const handleSave = async () => {
                         if (!formData.amount) return;
@@ -160,7 +171,7 @@
                                     mode: 'no-cors', 
                                     body: JSON.stringify(record)
                                 });
-                            } catch (e) { console.error("GAS 同步失敗", e); }
+                            } catch (e) {}
                         }
                         
                         setFormData({ ...formData, amount: '', merchant: '', note: '' });
@@ -181,7 +192,7 @@
 
                             <main className="max-w-md mx-auto p-4">
                                 {statusMsg && (
-                                    <div className="mb-4 p-3 bg-indigo-600 text-white text-xs font-bold rounded-xl text-center animate-bounce">
+                                    <div className={`mb-4 p-3 ${statusMsg.includes('失敗') || statusMsg.includes('錯誤') ? 'bg-red-500' : 'bg-indigo-600'} text-white text-xs font-bold rounded-xl text-center shadow-lg`}>
                                         {statusMsg}
                                     </div>
                                 )}
@@ -194,7 +205,7 @@
                                         </div>
 
                                         <div className="grid grid-cols-2 gap-4">
-                                            <button onClick={() => setView('add')} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col items-center gap-2 active:scale-95 transition-transform">
+                                            <button onClick={() => setView('add')} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col items-center gap-2">
                                                 <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
                                                     <Icon name="plus" />
                                                 </div>
@@ -212,116 +223,73 @@
                                             <h3 className="px-2 text-sm font-bold text-slate-400 flex items-center gap-2 tracking-widest uppercase">
                                                 <Icon name="history" className="w-4 h-4" /> 最近紀錄
                                             </h3>
-                                            {expenses.length === 0 ? (
-                                                <p className="text-center py-10 text-slate-300 italic">尚未有記帳資料</p>
-                                            ) : (
-                                                expenses.slice(0, 5).map((ex) => (
-                                                    <div key={ex.id} className="bg-white p-4 rounded-3xl flex justify-between items-center shadow-sm border border-slate-50">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-bold">
-                                                                {ex.category[0]}
-                                                            </div>
-                                                            <div>
-                                                                <p className="font-bold text-sm text-slate-700">{ex.merchant || ex.category}</p>
-                                                                <p className="text-[10px] text-slate-400">{ex.date}</p>
-                                                            </div>
+                                            {expenses.slice(0, 5).map((ex) => (
+                                                <div key={ex.id} className="bg-white p-4 rounded-3xl flex justify-between items-center shadow-sm border border-slate-50">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-bold">{ex.category[0]}</div>
+                                                        <div>
+                                                            <p className="font-bold text-sm text-slate-700">{ex.merchant || ex.category}</p>
+                                                            <p className="text-[10px] text-slate-400">{ex.date}</p>
                                                         </div>
-                                                        <p className="font-black text-sm text-red-500">-{ex.currency} {Number(ex.amount).toLocaleString()}</p>
                                                     </div>
-                                                ))
-                                            )}
+                                                    <p className="font-black text-sm text-red-500">-{ex.currency} {Number(ex.amount).toLocaleString()}</p>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 )}
 
                                 {view === 'add' && (
                                     <div className="space-y-5">
-                                        <div className="flex gap-4">
-                                            <button 
-                                                onClick={startSpeech}
-                                                className={`flex-1 p-6 rounded-[2rem] border-2 border-dashed flex flex-col items-center gap-2 transition-all ${isListening ? 'border-red-500 bg-red-50 text-red-500 pulse-red' : 'border-indigo-100 bg-white text-indigo-600'}`}
-                                            >
-                                                <Icon name={isListening ? "mic-off" : "mic"} />
-                                                <span className="text-xs font-bold uppercase tracking-tighter">{isListening ? '正在聆聽...' : '語音輸入'}</span>
-                                            </button>
-                                            <div className="flex-1 p-6 rounded-[2rem] border-2 border-dashed border-slate-100 bg-white text-slate-300 flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
-                                                <Icon name="camera" />
-                                                <span className="text-xs font-bold uppercase tracking-tighter">相片識別</span>
-                                            </div>
-                                        </div>
+                                        <button 
+                                            onClick={startSpeech}
+                                            className={`w-full p-8 rounded-[2.5rem] border-2 border-dashed flex flex-col items-center gap-2 transition-all ${isListening ? 'border-red-500 bg-red-50 text-red-500 pulse-red' : 'border-indigo-100 bg-white text-indigo-600'}`}
+                                        >
+                                            <Icon name={isListening ? "mic-off" : "mic"} className="w-8 h-8" />
+                                            <span className="font-bold uppercase tracking-widest">{isListening ? '正在聆聽...' : '點擊開始語音記帳'}</span>
+                                        </button>
 
                                         <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-slate-100 space-y-5 relative overflow-hidden">
                                             {aiLoading && (
                                                 <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-10 flex flex-col items-center justify-center">
                                                     <div className="loading-spinner mb-4"></div>
-                                                    <p className="text-sm font-bold text-indigo-600 tracking-tighter">AI 正在解析帳目...</p>
+                                                    <p className="text-sm font-bold text-indigo-600 tracking-tighter">AI 解析中...</p>
                                                 </div>
                                             )}
                                             
                                             <div className="flex gap-2">
                                                 <div className="w-24">
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">幣種</label>
-                                                    <select 
-                                                        value={formData.currency} 
-                                                        onChange={e => setFormData({...formData, currency: e.target.value})}
-                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100"
-                                                    >
+                                                    <select value={formData.currency} onChange={e => setFormData({...formData, currency: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100">
                                                         {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                                                     </select>
                                                 </div>
                                                 <div className="flex-1">
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">金額</label>
-                                                    <input 
-                                                        type="number" 
-                                                        inputMode="decimal"
-                                                        value={formData.amount} 
-                                                        onChange={e => setFormData({...formData, amount: e.target.value})}
-                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-xl font-black outline-none ring-1 ring-slate-100"
-                                                        placeholder="0"
-                                                    />
+                                                    <input type="number" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-xl font-black outline-none ring-1 ring-slate-100" />
                                                 </div>
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-4">
                                                 <div>
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">日期</label>
-                                                    <input 
-                                                        type="date" 
-                                                        value={formData.date} 
-                                                        onChange={e => setFormData({...formData, date: e.target.value})}
-                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100" 
-                                                    />
+                                                    <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100" />
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">分類</label>
-                                                    <select 
-                                                        value={formData.category} 
-                                                        onChange={e => setFormData({...formData, category: e.target.value})}
-                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100"
-                                                    >
+                                                    <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100">
                                                         {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                                     </select>
                                                 </div>
                                             </div>
 
                                             <div>
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">商家名稱</label>
-                                                <input 
-                                                    type="text" 
-                                                    value={formData.merchant} 
-                                                    onChange={e => setFormData({...formData, merchant: e.target.value})}
-                                                    className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-sm outline-none ring-1 ring-slate-100" 
-                                                    placeholder="輸入商家..."
-                                                />
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">商家</label>
+                                                <input type="text" value={formData.merchant} onChange={e => setFormData({...formData, merchant: e.target.value})} className="w-full mt-1 p-4 bg-slate-50 rounded-2xl text-sm outline-none ring-1 ring-slate-100" placeholder="商家..." />
                                             </div>
 
-                                            <button 
-                                                onClick={handleSave}
-                                                disabled={!formData.amount || syncing || aiLoading}
-                                                className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all"
-                                            >
-                                                {syncing ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="save" />} 
-                                                確認儲存
+                                            <button onClick={handleSave} disabled={!formData.amount || syncing || aiLoading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50">
+                                                {syncing ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="save" />} 儲存帳目
                                             </button>
                                         </div>
                                     </div>
@@ -330,7 +298,7 @@
 
                             <nav className="fixed bottom-6 left-6 right-6 bg-white/90 backdrop-blur-md border border-slate-200 px-8 py-3 rounded-full flex justify-between items-center z-50 shadow-xl">
                                 <button onClick={() => setView('dashboard')} className={view === 'dashboard' ? 'text-indigo-600' : 'text-slate-300'}><Icon name="layout-dashboard" /></button>
-                                <button onClick={() => setView('add')} className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-lg -mt-10 active:scale-90 transition-transform"><Icon name="plus" /></button>
+                                <button onClick={() => setView('add')} className="w-12 h-12 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-lg -mt-10 active:scale-90"><Icon name="plus" /></button>
                                 <button className="text-slate-200"><Icon name="pie-chart" /></button>
                             </nav>
                         </div>
