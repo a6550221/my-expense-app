@@ -38,8 +38,8 @@
 
                 const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyPmJnep8GKhqIpwkJgokekQpirRJFZRB-PRXD9QZVpx786tEVDxCOYi4bb7gsj5lyL/exec";
                 
-                // 重要：在 Canvas 環境中，必須保持 apiKey 為空字串
-                // 系統會自動在執行時填入正確的預覽金鑰
+                // 重要：在 Canvas 環境中，必須保持 apiKey 為空字串 ""
+                // 系統會自動在運行時注入有效的 API Key
                 const apiKey = ""; 
                 
                 const CATEGORIES = ['食物', '生活', '娛樂', '交通', '醫療', '教育', '其他'];
@@ -86,14 +86,15 @@
                         setAiLoading(true);
                         setStatusMsg('AI 正在解析...');
 
-                        // 實作指數退避的請求邏輯以處理 403/500 等錯誤
+                        // 實作指數退避的請求邏輯，專門針對 403 權限問題進行重試
                         const fetchWithRetry = async (url, options, maxRetries = 5) => {
                             let delay = 1000;
                             for (let i = 0; i < maxRetries; i++) {
                                 try {
                                     const response = await fetch(url, options);
                                     if (response.ok) return response;
-                                    // 如果是權限或頻率限制，則進行重試
+                                    
+                                    // 遇到 403 代表身份尚未同步，等待後重試
                                     if (response.status === 403 || response.status === 429 || response.status >= 500) {
                                         await new Promise(resolve => setTimeout(resolve, delay));
                                         delay *= 2;
@@ -106,15 +107,19 @@
                                     delay *= 2;
                                 }
                             }
+                            throw new Error('API 調用超時或無權限');
                         };
 
                         try {
                             const systemPrompt = "你是一個專業記帳助手。請從語音中提取：amount(數字)、merchant(字串)、category(選一:食物,生活,娛樂,交通,醫療,教育,其他)。請務必回傳純 JSON 格式，不要有任何 Markdown 標記。";
                             const userQuery = `語音內容：「${transcript}」`;
 
+                            // 確保使用正確的 endpoint 並正確傳遞 Key
                             const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 
+                                    'Content-Type': 'application/json'
+                                },
                                 body: JSON.stringify({
                                     contents: [{ parts: [{ text: userQuery }] }],
                                     systemInstruction: { parts: [{ text: systemPrompt }] }
@@ -122,9 +127,13 @@
                             });
 
                             const result = await response.json();
+                            
+                            if (result.error) {
+                                throw new Error(result.error.message || 'API 錯誤');
+                            }
+
                             const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
                             
-                            // 清理可能的 Markdown 格式
                             const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
                             const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
                             
@@ -141,7 +150,7 @@
                             }
                         } catch (e) {
                             console.error("解析失敗", e);
-                            setStatusMsg(`解析失敗，請手動檢查網頁權限`);
+                            setStatusMsg(`解析失敗: ${e.message}`);
                         } finally {
                             setAiLoading(false);
                             setTimeout(() => setStatusMsg(''), 3000);
