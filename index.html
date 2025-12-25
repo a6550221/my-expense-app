@@ -5,51 +5,52 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>智慧記帳助手</title>
     
-    <script src="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.js"></script>
+    <!-- 使用在全球與亞洲地區（含中國、台、菲、日）都有極佳穩定性的 CDN -->
+    <script src="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.js"></script>
     <style>
         body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background-color: #f8fafc;
         }
         #root:empty { display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column; gap: 1rem; }
         .loading-spinner { width: 40px; height: 40px; border: 4px solid #e2e8f0; border-top: 4px solid #6366f1; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .error-box { padding: 20px; color: #ef4444; background: #fee2e2; border-radius: 12px; margin: 20px; font-size: 14px; line-height: 1.6; }
+        .error-box { padding: 24px; color: #ef4444; background: #ffffff; border: 2px solid #fee2e2; border-radius: 20px; margin: 20px; font-size: 14px; line-height: 1.6; shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .error-title { font-weight: 900; font-size: 18px; margin-bottom: 8px; display: block; }
     </style>
 
-    <!-- 使用 jsDelivr 節點，通常在亞洲區加載最快 -->
-    <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.23.5/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/lucide@0.321.0/dist/umd/lucide.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/recharts@2.10.3/umd/Recharts.js"></script>
+    <!-- 核心庫：優先選用 unpkg 或 staticfile (亞洲區優化節點) -->
+    <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.23.5/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.321.0/dist/umd/lucide.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.10.3/umd/Recharts.js"></script>
 </head>
 <body class="bg-slate-50">
     <div id="root">
         <div class="loading-spinner"></div>
-        <p id="status-text" class="text-slate-400 text-sm">系統初始化中...</p>
+        <p id="status-text" class="text-slate-400 text-sm font-medium">連線至全球節點中...</p>
     </div>
 
     <script type="text/babel">
-        // 錯誤監控與啟動邏輯
         (function() {
             const rootEl = document.getElementById('root');
-            const statusText = document.getElementById('status-text');
-
-            // 檢查環境變量是否就緒
+            
+            // 檢查環境變量，若 CDN 失敗則拋出異常
             const checkEnv = () => {
                 const missing = [];
-                if (!window.React) missing.push('React');
-                if (!window.ReactDOM) missing.push('ReactDOM');
-                if (!window.Recharts) missing.push('Recharts');
-                if (!window.lucide) missing.push('Lucide');
+                if (!window.React) missing.push('React (核心框架)');
+                if (!window.ReactDOM) missing.push('ReactDOM (渲染引擎)');
+                if (!window.Recharts) missing.push('Recharts (圖表組件)');
+                if (!window.lucide) missing.push('Lucide (圖標庫)');
+                if (!window.Babel) missing.push('Babel (編譯器)');
                 return missing;
             };
 
             try {
                 const missingDeps = checkEnv();
                 if (missingDeps.length > 0) {
-                    throw new Error(`關鍵資源加載失敗: ${missingDeps.join(', ')}。請檢查網路連線或關閉廣告攔截器。`);
+                    throw new Error(`[CDN 加載異常] 無法從當前地區存取以下資源：\n${missingDeps.join('\n')}\n\n建議：請檢查網路環境或嘗試更換網路分流。`);
                 }
 
                 const { useState, useEffect, useMemo } = React;
@@ -118,7 +119,7 @@
                                     <Icon name="dollar-sign" /> 智慧記帳助手
                                 </h1>
                                 {view !== 'dashboard' && (
-                                    <button onClick={() => setView('dashboard')} className="p-2 bg-white/20 rounded-full">
+                                    <button onClick={() => setView('dashboard')} className="p-2 bg-white/20 rounded-full active:bg-white/40">
                                         <Icon name="x" className="w-5 h-5" />
                                     </button>
                                 )}
@@ -137,7 +138,7 @@
                                             <button onClick={() => setView('add')} className="bg-indigo-600 text-white p-6 rounded-[1.5rem] flex flex-col items-center gap-2 shadow-lg active:scale-95 transition-transform">
                                                 <Icon name="plus" className="w-8 h-8" /><span className="font-bold">新增帳目</span>
                                             </button>
-                                            <button onClick={() => setView('analysis')} className="bg-white text-indigo-600 p-6 rounded-[1.5rem] border border-indigo-100 flex flex-col items-center gap-2 shadow-sm">
+                                            <button onClick={() => setView('analysis')} className="bg-white text-indigo-600 p-6 rounded-[1.5rem] border border-indigo-100 flex flex-col items-center gap-2 shadow-sm active:scale-95 transition-transform">
                                                 <Icon name="pie-chart" className="w-8 h-8" /><span className="font-bold">消費分析</span>
                                             </button>
                                         </div>
@@ -163,7 +164,7 @@
                                 )}
 
                                 {view === 'add' && (
-                                    <div className="bg-white rounded-[2rem] p-6 shadow-xl border border-slate-100 space-y-4">
+                                    <div className="bg-white rounded-[2rem] p-6 shadow-xl border border-slate-100 space-y-4 animate-in slide-in-from-bottom-4 duration-300">
                                         <h2 className="text-center font-bold text-lg text-slate-800">手動輸入支出</h2>
                                         <div className="space-y-4">
                                             <div className="flex gap-2">
@@ -196,7 +197,7 @@
                                             <button 
                                                 onClick={() => saveExpense(formData)} 
                                                 disabled={!formData.amount || syncing} 
-                                                className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                                                className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all"
                                             >
                                                 {syncing ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="save" />} 
                                                 儲存帳目
@@ -206,7 +207,7 @@
                                 )}
 
                                 {view === 'analysis' && (
-                                    <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 h-80">
+                                    <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 h-80 animate-in zoom-in-95 duration-300">
                                         <h3 className="font-bold text-center mb-6 text-slate-800">支出佔比</h3>
                                         <ResponsiveContainer width="100%" height="100%">
                                             <PieChart>
@@ -232,7 +233,15 @@
 
                 ReactDOM.createRoot(rootEl).render(<App />);
             } catch (err) {
-                rootEl.innerHTML = `<div class="error-box"><strong>啟動失敗</strong><br/>${err.message}</div>`;
+                rootEl.innerHTML = `
+                    <div class="error-box">
+                        <span class="error-title">⚠️ 啟動失敗</span>
+                        <div class="whitespace-pre-wrap">${err.message}</div>
+                        <div class="mt-4 pt-4 border-t border-red-100 text-[12px] text-slate-400">
+                            提示：如果您身處公司網路或特定區域，建議嘗試關閉 VPN 或廣告攔截器後重新整理。
+                        </div>
+                    </div>
+                `;
             }
         })();
     </script>
