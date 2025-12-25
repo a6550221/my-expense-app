@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>記帳助手 - 分頁功能測試</title>
+    <title>記帳助手 - 語音 AI 測試</title>
     
     <script src="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.js"></script>
     <style>
@@ -12,6 +12,8 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .error-box { padding: 20px; color: #ef4444; background: white; border: 1px solid #fee2e2; border-radius: 12px; margin: 20px; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
+        .pulse-red { animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
     </style>
 
     <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
@@ -23,7 +25,7 @@
     <div id="root">
         <div class="flex flex-col items-center justify-center h-screen">
             <div class="loading-spinner"></div>
-            <p class="mt-4 text-slate-400">正在恢復分頁功能...</p>
+            <p class="mt-4 text-slate-400">正在啟動 AI 語音模組...</p>
         </div>
     </div>
 
@@ -39,11 +41,12 @@
                 const { useState, useEffect, useMemo } = React;
 
                 const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyPmJnep8GKhqIpwkJgokekQpirRJFZRB-PRXD9QZVpx786tEVDxCOYi4bb7gsj5lyL/exec";
+                const GEMINI_API_KEY = ""; // 執行環境自動處理
                 const CATEGORIES = ['食物', '生活', '娛樂', '交通', '醫療', '教育', '其他'];
                 const CURRENCIES = ['PHP', 'TWD', 'USD', 'HKD', 'JPY'];
 
                 const Icon = ({ name, className = "w-6 h-6" }) => {
-                    useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
+                    useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name, className]);
                     return <i data-lucide={name} className={className}></i>;
                 };
 
@@ -51,6 +54,9 @@
                     const [view, setView] = useState('dashboard');
                     const [expenses, setExpenses] = useState([]);
                     const [syncing, setSyncing] = useState(false);
+                    const [isListening, setIsListening] = useState(false);
+                    const [aiLoading, setAiLoading] = useState(false);
+                    
                     const [formData, setFormData] = useState({
                         date: new Date().toISOString().split('T')[0],
                         amount: '',
@@ -70,6 +76,58 @@
                             .filter(ex => ex.currency === 'PHP')
                             .reduce((s, c) => s + Number(c.amount), 0);
                     }, [expenses]);
+
+                    // --- 語音識別解析 ---
+                    const startSpeech = () => {
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                        if (!SpeechRecognition) {
+                            alert("您的瀏覽器不支援語音識別。");
+                            return;
+                        }
+
+                        const recognition = new SpeechRecognition();
+                        recognition.lang = 'zh-TW';
+                        
+                        recognition.onstart = () => setIsListening(true);
+                        recognition.onend = () => setIsListening(false);
+                        
+                        recognition.onresult = async (event) => {
+                            const transcript = event.results[0][0].transcript;
+                            setAiLoading(true);
+                            
+                            try {
+                                const prompt = `
+                                    語音內容：「${transcript}」
+                                    請從中提取金額(amount)、商家(merchant)、建議分類(category)、細節(note)。
+                                    分類限從 [食物, 生活, 娛樂, 交通, 醫療, 教育, 其他] 選一。
+                                    回傳 JSON 格式：{"amount": 數字, "merchant": "字串", "category": "字串", "note": "字串"}
+                                `;
+
+                                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                                });
+
+                                const result = await response.json();
+                                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                                const jsonMatch = text.match(/\{.*\}/s);
+                                
+                                if (jsonMatch) {
+                                    const parsed = JSON.parse(jsonMatch[0]);
+                                    setFormData(prev => ({
+                                        ...prev,
+                                        amount: parsed.amount || prev.amount,
+                                        merchant: parsed.merchant || prev.merchant,
+                                        category: CATEGORIES.includes(parsed.category) ? parsed.category : prev.category,
+                                        note: `語音識別：${transcript}`
+                                    }));
+                                }
+                            } catch (e) { console.error("AI 解析失敗", e); }
+                            finally { setAiLoading(false); }
+                        };
+                        recognition.start();
+                    };
 
                     const handleSave = async () => {
                         setSyncing(true);
@@ -95,7 +153,7 @@
 
                     return (
                         <div className="min-h-screen bg-slate-50 pb-24">
-                            <header className="bg-white border-b border-slate-100 p-4 sticky top-0 z-50 flex justify-between items-center">
+                            <header className="bg-white border-b border-slate-100 p-4 sticky top-0 z-50 flex justify-between items-center shadow-sm">
                                 <h1 className="text-xl font-black text-indigo-600">智慧記帳</h1>
                                 {view !== 'dashboard' && (
                                     <button onClick={() => setView('dashboard')} className="p-2 text-slate-400">
@@ -107,7 +165,8 @@
                             <main className="max-w-md mx-auto p-4">
                                 {view === 'dashboard' && (
                                     <div className="space-y-6 animate-in fade-in duration-500">
-                                        <div className="bg-gradient-to-br from-indigo-600 to-violet-700 p-8 rounded-[2.5rem] shadow-xl text-white">
+                                        <div className="bg-gradient-to-br from-indigo-600 to-violet-700 p-8 rounded-[2.5rem] shadow-xl text-white relative overflow-hidden">
+                                            <div className="absolute -right-10 -top-10 w-40 h-40 bg-white opacity-10 rounded-full"></div>
                                             <p className="opacity-70 text-xs font-bold uppercase tracking-widest mb-1">本月累計 (PHP)</p>
                                             <h2 className="text-4xl font-black">${totalPHP.toLocaleString()}</h2>
                                         </div>
@@ -119,11 +178,11 @@
                                                 </div>
                                                 <span className="font-bold text-slate-700">新增帳目</span>
                                             </button>
-                                            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
+                                            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col items-center gap-2 opacity-50">
                                                 <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center text-slate-400">
                                                     <Icon name="pie-chart" />
                                                 </div>
-                                                <span className="font-bold text-slate-400">分析待恢復</span>
+                                                <span className="font-bold text-slate-400">分析開發中</span>
                                             </div>
                                         </div>
 
@@ -151,69 +210,92 @@
                                 )}
 
                                 {view === 'add' && (
-                                    <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-slate-100 space-y-5 animate-in slide-in-from-bottom-4 duration-300">
-                                        <div className="flex gap-2">
-                                            <div className="w-24">
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">幣種</label>
-                                                <select 
-                                                    value={formData.currency} 
-                                                    onChange={e => setFormData({...formData, currency: e.target.value})}
-                                                    className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold border-none outline-none ring-1 ring-slate-100"
-                                                >
-                                                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
-                                                </select>
-                                            </div>
-                                            <div className="flex-1">
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">金額</label>
-                                                <input 
-                                                    type="number" 
-                                                    inputMode="decimal"
-                                                    value={formData.amount} 
-                                                    onChange={e => setFormData({...formData, amount: e.target.value})}
-                                                    className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-xl font-black outline-none ring-1 ring-slate-100"
-                                                    placeholder="0.00"
-                                                />
+                                    <div className="space-y-5 animate-in slide-in-from-bottom-4 duration-300">
+                                        <div className="flex gap-4">
+                                            <button 
+                                                onClick={startSpeech}
+                                                className={`flex-1 p-6 rounded-[2rem] border-2 border-dashed flex flex-col items-center gap-2 transition-all ${isListening ? 'border-red-500 bg-red-50 text-red-500 pulse-red' : 'border-indigo-100 bg-white text-indigo-600'}`}
+                                            >
+                                                <Icon name={isListening ? "mic-off" : "mic"} />
+                                                <span className="text-xs font-bold uppercase">{isListening ? '聽取中...' : '語音記帳'}</span>
+                                            </button>
+                                            <div className="flex-1 p-6 rounded-[2rem] border-2 border-dashed border-slate-100 bg-white text-slate-300 flex flex-col items-center gap-2 opacity-50 cursor-not-allowed">
+                                                <Icon name="camera" />
+                                                <span className="text-xs font-bold uppercase">拍照待恢復</span>
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">日期</label>
-                                                <input 
-                                                    type="date" 
-                                                    value={formData.date} 
-                                                    onChange={e => setFormData({...formData, date: e.target.value})}
-                                                    className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100" 
-                                                />
+                                        <div className="bg-white rounded-[2.5rem] p-6 shadow-xl border border-slate-100 space-y-5 relative">
+                                            {aiLoading && (
+                                                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm rounded-[2.5rem] z-10 flex flex-col items-center justify-center">
+                                                    <div className="loading-spinner"></div>
+                                                    <p className="mt-2 text-sm font-bold text-indigo-600">AI 正在解析內容...</p>
+                                                </div>
+                                            )}
+                                            
+                                            <div className="flex gap-2">
+                                                <div className="w-24">
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">幣種</label>
+                                                    <select 
+                                                        value={formData.currency} 
+                                                        onChange={e => setFormData({...formData, currency: e.target.value})}
+                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold border-none outline-none ring-1 ring-slate-100"
+                                                    >
+                                                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="flex-1">
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">金額</label>
+                                                    <input 
+                                                        type="number" 
+                                                        inputMode="decimal"
+                                                        value={formData.amount} 
+                                                        onChange={e => setFormData({...formData, amount: e.target.value})}
+                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-xl font-black outline-none ring-1 ring-slate-100"
+                                                        placeholder="0.00"
+                                                    />
+                                                </div>
                                             </div>
-                                            <div>
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">分類</label>
-                                                <select 
-                                                    value={formData.category} 
-                                                    onChange={e => setFormData({...formData, category: e.target.value})}
-                                                    className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100"
-                                                >
-                                                    {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                                                </select>
-                                            </div>
-                                        </div>
 
-                                        <input 
-                                            type="text" 
-                                            placeholder="商家名稱" 
-                                            value={formData.merchant} 
-                                            onChange={e => setFormData({...formData, merchant: e.target.value})}
-                                            className="w-full p-4 bg-slate-50 rounded-2xl text-sm outline-none ring-1 ring-slate-100" 
-                                        />
-                                        
-                                        <button 
-                                            onClick={handleSave}
-                                            disabled={!formData.amount || syncing}
-                                            className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all"
-                                        >
-                                            {syncing ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="save" />} 
-                                            儲存紀錄
-                                        </button>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">日期</label>
+                                                    <input 
+                                                        type="date" 
+                                                        value={formData.date} 
+                                                        onChange={e => setFormData({...formData, date: e.target.value})}
+                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100" 
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">分類</label>
+                                                    <select 
+                                                        value={formData.category} 
+                                                        onChange={e => setFormData({...formData, category: e.target.value})}
+                                                        className="w-full mt-1 p-3 bg-slate-50 rounded-2xl text-sm font-bold outline-none ring-1 ring-slate-100"
+                                                    >
+                                                        {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <input 
+                                                type="text" 
+                                                placeholder="商家名稱" 
+                                                value={formData.merchant} 
+                                                onChange={e => setFormData({...formData, merchant: e.target.value})}
+                                                className="w-full p-4 bg-slate-50 rounded-2xl text-sm outline-none ring-1 ring-slate-100" 
+                                            />
+                                            
+                                            <button 
+                                                onClick={handleSave}
+                                                disabled={!formData.amount || syncing || aiLoading}
+                                                className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold shadow-lg flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50 transition-all"
+                                            >
+                                                {syncing ? <Icon name="loader-2" className="animate-spin" /> : <Icon name="save" />} 
+                                                儲存紀錄
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </main>
