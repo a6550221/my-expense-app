@@ -38,7 +38,8 @@
 
                 const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyPmJnep8GKhqIpwkJgokekQpirRJFZRB-PRXD9QZVpx786tEVDxCOYi4bb7gsj5lyL/exec";
                 
-                // 修正：在 Canvas 中使用空字串，系統會自動處理 API Key
+                // 重要：在 Canvas 環境中，必須保持 apiKey 為空字串
+                // 系統會自動在執行時填入正確的預覽金鑰
                 const apiKey = ""; 
                 
                 const CATEGORIES = ['食物', '生活', '娛樂', '交通', '醫療', '教育', '其他'];
@@ -85,23 +86,31 @@
                         setAiLoading(true);
                         setStatusMsg('AI 正在解析...');
 
-                        try {
-                            const systemPrompt = "你是一個專業記帳助手。請從語音中提取：amount(數字)、merchant(字串)、category(選一:食物,生活,娛樂,交通,醫療,教育,其他)。請務必回傳純 JSON 格式。";
-                            const userQuery = `語音內容：「${transcript}」`;
-                            
-                            // 使用 Canvas 推薦的 fetch 模式與指數退避
-                            const fetchWithRetry = async (url, options, retries = 5) => {
-                                for (let i = 0; i < retries; i++) {
-                                    try {
-                                        const response = await fetch(url, options);
-                                        if (response.ok) return response;
-                                        if (response.status === 403) throw new Error("權限錯誤 (403)");
-                                    } catch (err) {
-                                        if (i === retries - 1) throw err;
-                                        await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+                        // 實作指數退避的請求邏輯以處理 403/500 等錯誤
+                        const fetchWithRetry = async (url, options, maxRetries = 5) => {
+                            let delay = 1000;
+                            for (let i = 0; i < maxRetries; i++) {
+                                try {
+                                    const response = await fetch(url, options);
+                                    if (response.ok) return response;
+                                    // 如果是權限或頻率限制，則進行重試
+                                    if (response.status === 403 || response.status === 429 || response.status >= 500) {
+                                        await new Promise(resolve => setTimeout(resolve, delay));
+                                        delay *= 2;
+                                        continue;
                                     }
+                                    return response;
+                                } catch (err) {
+                                    if (i === maxRetries - 1) throw err;
+                                    await new Promise(resolve => setTimeout(resolve, delay));
+                                    delay *= 2;
                                 }
-                            };
+                            }
+                        };
+
+                        try {
+                            const systemPrompt = "你是一個專業記帳助手。請從語音中提取：amount(數字)、merchant(字串)、category(選一:食物,生活,娛樂,交通,醫療,教育,其他)。請務必回傳純 JSON 格式，不要有任何 Markdown 標記。";
+                            const userQuery = `語音內容：「${transcript}」`;
 
                             const response = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
                                 method: 'POST',
@@ -115,7 +124,10 @@
                             const result = await response.json();
                             const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
                             
-                            const jsonMatch = text.match(/\{[\s\S]*\}/);
+                            // 清理可能的 Markdown 格式
+                            const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                            const jsonMatch = cleanJson.match(/\{[\s\S]*\}/);
+                            
                             if (jsonMatch) {
                                 const parsed = JSON.parse(jsonMatch[0]);
                                 setFormData(prev => ({
@@ -129,7 +141,7 @@
                             }
                         } catch (e) {
                             console.error("解析失敗", e);
-                            setStatusMsg(`失敗: ${e.message}`);
+                            setStatusMsg(`解析失敗，請手動檢查網頁權限`);
                         } finally {
                             setAiLoading(false);
                             setTimeout(() => setStatusMsg(''), 3000);
