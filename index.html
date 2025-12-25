@@ -27,7 +27,6 @@
         (function() {
             const { useState, useEffect, useMemo, useRef } = React;
 
-            // --- 配置 ---
             const apiKey = ""; // API Key 留空，環境將自動注入
             const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyPmJnep8GKhqIpwkJgokekQpirRJFZRB-PRXD9QZVpx786tEVDxCOYi4bb7gsj5lyL/exec";
             
@@ -53,7 +52,7 @@
                     amount: '',
                     category: '食物',
                     merchant: '',
-                    details: '', // 消費明細
+                    details: '', 
                     currency: 'PHP',
                     note: ''
                 });
@@ -69,18 +68,18 @@
                         .reduce((s, c) => s + Number(c.amount || 0), 0);
                 }, [expenses]);
 
-                // AI 分析邏輯整合 (語音與圖片共用提示核心)
+                // AI 分析邏輯修復
                 const analyzeWithGemini = async (input, type = 'text') => {
                     setAiLoading(true);
                     setStatusMsg(type === 'text' ? 'AI 正在理解語音...' : 'AI 正在識別帳單...');
 
-                    const systemPrompt = `你是一個專業的帳務管理員。請從輸入內容中提取以下 JSON 格式：
+                    const systemPrompt = `你是一個專業的帳務管理員。請從輸入內容中提取以下 JSON 格式。務必只回傳 JSON，不要包含 Markdown 語法（不要 \`\`\`json）：
                     {
                       "amount": 數字,
                       "merchant": "商家名稱",
                       "category": "限從:食物,生活,娛樂,交通,醫療,教育,其他中選一",
-                      "details": "列出具體的消費項目明細，例如：大麥克x1, 薯條x1",
-                      "date": "YYYY-MM-DD (如果是今天請省略)"
+                      "details": "具體項目清單，如: 大麥克x1, 薯條x1",
+                      "date": "YYYY-MM-DD"
                     }`;
 
                     try {
@@ -106,6 +105,8 @@
 
                         const result = await response.json();
                         const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                        
+                        // 強化 JSON 提取正則表達式
                         const jsonMatch = text.match(/\{[\s\S]*\}/);
                         
                         if (jsonMatch) {
@@ -119,9 +120,12 @@
                                 date: parsed.date || prev.date
                             }));
                             setStatusMsg('AI 填寫完成');
+                        } else {
+                            throw new Error('JSON 解析失敗');
                         }
                     } catch (e) {
-                        setStatusMsg('AI 分析失敗');
+                        setStatusMsg('AI 解析失敗，請手動確認');
+                        console.error("AI Error:", e);
                     } finally {
                         setAiLoading(false);
                         setTimeout(() => setStatusMsg(''), 3000);
@@ -252,6 +256,7 @@
                                         >
                                             <Icon name="camera" className="w-8 h-8" />
                                             <span className="font-black text-[10px] tracking-widest uppercase">相機識別</span>
+                                            {/* capture="environment" 確保調用後鏡頭 */}
                                             <input type="file" accept="image/*" capture="environment" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
                                         </button>
                                     </div>
@@ -297,7 +302,7 @@
 
                                         <div>
                                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex justify-between">
-                                                消費明細 <span className="text-indigo-500 lowercase font-normal italic">AI 自動填充</span>
+                                                消費明細 <span className="text-indigo-500 lowercase font-normal italic font-sans text-[9px]">AI AUTO-FILL</span>
                                             </label>
                                             <textarea 
                                                 value={formData.details} 
