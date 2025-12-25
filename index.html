@@ -71,24 +71,27 @@
 
                 const analyzeWithGemini = async (input, type = 'text') => {
                     setAiLoading(true);
-                    setStatusMsg(type === 'text' ? 'AI 正在理解語音...' : 'AI 正在識別帳單...');
+                    setStatusMsg(type === 'text' ? 'AI 正在理解語音...' : 'AI 正在識別圖片...');
 
-                    const systemPrompt = `你是一個專業的帳務管理員。請從輸入內容中提取以下 JSON 格式。務必只回傳 JSON，不要包含 Markdown 語法（不要 \`\`\`json）：
+                    const systemPrompt = `你是一個專業的帳務管理員。請從輸入內容（文字或圖片）中提取以下 JSON 格式。務必只回傳純 JSON 內容，不要包含 Markdown 語法或任何解釋。
                     {
                       "amount": 數字,
                       "merchant": "商家名稱",
                       "category": "限從:食物,生活,娛樂,交通,醫療,教育,其他中選一",
                       "method": "限從:現金,信用卡,電子支付,其他中選一",
-                      "details": "具體項目清單",
+                      "details": "具體細節",
                       "date": "YYYY-MM-DD"
                     }`;
 
                     try {
-                        let body;
+                        let payload;
                         if (type === 'text') {
-                            body = { contents: [{ parts: [{ text: `${systemPrompt}\n\n輸入內容：「${input}」` }] }] };
+                            payload = { 
+                                contents: [{ parts: [{ text: `${systemPrompt}\n\n輸入內容：「${input}」` }] }] 
+                            };
                         } else {
-                            body = { 
+                            // 圖片模式 payload
+                            payload = { 
                                 contents: [{ 
                                     parts: [
                                         { text: systemPrompt }, 
@@ -101,18 +104,20 @@
                         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(body)
+                            body: JSON.stringify(payload)
                         });
 
                         const result = await response.json();
                         const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
+                        
+                        // 強化 JSON 提取邏輯
                         const jsonMatch = text.match(/\{[\s\S]*\}/);
                         
                         if (jsonMatch) {
                             const parsed = JSON.parse(jsonMatch[0]);
                             setFormData(prev => ({
                                 ...prev,
-                                amount: parsed.amount || prev.amount,
+                                amount: parsed.amount !== undefined ? String(parsed.amount) : prev.amount,
                                 merchant: parsed.merchant || prev.merchant,
                                 details: parsed.details || prev.details,
                                 category: CATEGORIES.includes(parsed.category) ? parsed.category : prev.category,
@@ -120,9 +125,12 @@
                                 date: parsed.date || prev.date
                             }));
                             setStatusMsg('AI 填寫完成');
+                        } else {
+                            throw new Error("無法解析 AI 回傳內容");
                         }
                     } catch (e) {
-                        setStatusMsg('AI 解析失敗');
+                        console.error("AI Error:", e);
+                        setStatusMsg('AI 解析失敗，請手動輸入');
                     } finally {
                         setAiLoading(false);
                         setTimeout(() => setStatusMsg(''), 3000);
@@ -131,7 +139,7 @@
 
                 const startSpeech = () => {
                     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                    if (!Recognition) { setStatusMsg('不支援語音'); return; }
+                    if (!Recognition) { setStatusMsg('瀏覽器不支援語音'); return; }
                     const rec = new Recognition();
                     rec.lang = 'zh-TW';
                     rec.onstart = () => setIsListening(true);
@@ -143,11 +151,14 @@
                 const handleImageUpload = (e) => {
                     const file = e.target.files[0];
                     if (!file) return;
+                    
+                    setStatusMsg('讀取圖片中...');
                     const reader = new FileReader();
                     reader.onloadend = () => {
                         const base64 = reader.result.split(',')[1];
                         analyzeWithGemini({ mimeType: file.type, base64 }, 'image');
                     };
+                    reader.onerror = () => setStatusMsg('圖片讀取出錯');
                     reader.readAsDataURL(file);
                 };
 
@@ -156,7 +167,6 @@
                     setSyncing(true);
                     setStatusMsg('正在同步至雲端...');
                     
-                    // 重新排序數據，使其在寫入試算表時更加直觀
                     const record = { 
                         date: formData.date,
                         amount: formData.amount,
@@ -272,7 +282,14 @@
                                         >
                                             <Icon name="camera" className="w-8 h-8" />
                                             <span className="font-black text-[10px] tracking-widest uppercase">相機識別</span>
-                                            <input type="file" accept="image/*" capture="environment" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+                                            <input 
+                                                type="file" 
+                                                accept="image/*" 
+                                                capture="environment" 
+                                                className="hidden" 
+                                                ref={fileInputRef} 
+                                                onChange={handleImageUpload} 
+                                            />
                                         </button>
                                     </div>
 
@@ -280,7 +297,7 @@
                                         {aiLoading && (
                                             <div className="absolute inset-0 bg-white/95 backdrop-blur-md z-10 flex flex-col items-center justify-center rounded-[2.5rem]">
                                                 <div className="loading-spinner mb-4"></div>
-                                                <p className="text-sm font-black text-indigo-600 tracking-widest animate-pulse">AI 正在提取明細...</p>
+                                                <p className="text-sm font-black text-indigo-600 tracking-widest animate-pulse">AI 正在分析...</p>
                                             </div>
                                         )}
                                         
