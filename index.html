@@ -15,7 +15,7 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
-        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #0f172a; color: white; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         input[type="date"]::-webkit-inner-spin-button,
         input[type="date"]::-webkit-calendar-picker-indicator {
@@ -23,23 +23,37 @@
         }
     </style>
 </head>
-<body class="bg-[#0f172a]">
-    <div id="root"></div>
+<body>
+    <div id="root">
+        <!-- 初始讀取狀態，防止黑屏 -->
+        <div style="display: flex; height: 100vh; align-items: center; justify-content: center; font-family: sans-serif;">
+            <div style="text-align: center;">
+                <div style="width: 40px; height: 40px; border: 4px solid #312e81; border-top: 4px solid #6366f1; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px;"></div>
+                <p style="color: #94a3b8; font-size: 14px;">系統啟動中...</p>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
 
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
         
-        // Lucide Icon Component Wrapper
+        // Lucide 圖示組件（增加防錯處理）
         const Icon = ({ name, className }) => {
             const [svg, setSvg] = useState('');
             useEffect(() => {
-                if (window.lucide) {
-                    const icon = window.lucide.icons[name];
-                    if (icon) {
+                const timer = setInterval(() => {
+                    if (window.lucide && window.lucide.icons[name]) {
+                        const icon = window.lucide.icons[name];
                         const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${className}">${icon[1].map(i => `<${i[0]} ${Object.entries(i[1]).map(([k,v]) => `${k}="${v}"`).join(' ')} />`).join('')}</svg>`;
                         setSvg(svgString);
+                        clearInterval(timer);
                     }
-                }
+                }, 100);
+                return () => clearInterval(timer);
             }, [name, className]);
             return <div dangerouslySetInnerHTML={{ __html: svg }} />;
         };
@@ -60,6 +74,8 @@
             
             const recognitionRef = useRef(null);
             const fileInputRef = useRef(null);
+            
+            // 重要：請務必填寫您的 Gemini API Key
             const apiKey = ""; 
 
             const getTodayStr = () => new Date().toLocaleDateString('en-CA');
@@ -67,8 +83,10 @@
             const [formData, setFormData] = useState(initialFormState);
 
             useEffect(() => {
-                const saved = localStorage.getItem('expenses_v3_data');
-                if (saved) setExpenses(JSON.parse(saved));
+                try {
+                    const saved = localStorage.getItem('expenses_v3_data');
+                    if (saved) setExpenses(JSON.parse(saved));
+                } catch (e) { console.error("LocalStorage error", e); }
                 initSpeech();
             }, []);
 
@@ -85,6 +103,10 @@
             };
 
             const callGeminiAI = async (input, type) => {
+                if (!apiKey) {
+                    setStatusMsg('❌ 錯誤：尚未設定 API Key');
+                    return;
+                }
                 setLoading(true);
                 setStatusMsg('🤖 AI 智能識別中...');
                 try {
@@ -98,6 +120,9 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body)
                     });
+                    
+                    if (!res.ok) throw new Error('API 請求失敗');
+                    
                     const data = await res.json();
                     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
                     const jsonMatch = text.match(/\{.*\}/s);
@@ -108,8 +133,10 @@
                         if (updated.amount && type === 'text') autoSave(updated);
                         else setStatusMsg('⚠️ 請手動確認金額');
                     }
-                } catch (e) { setStatusMsg('❌ 識別失敗'); }
-                finally { setLoading(false); }
+                } catch (e) { 
+                    console.error(e);
+                    setStatusMsg('❌ 識別失敗，請檢查網路或 API Key'); 
+                } finally { setLoading(false); }
             };
 
             const autoSave = async (data) => {
@@ -121,8 +148,9 @@
                 try {
                     await fetch(GAS_WEB_APP_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(record) });
                     setShowConfirmModal(true);
-                } catch (e) {}
-                finally { setSyncing(false); setStatusMsg(''); }
+                } catch (e) {
+                    console.error("GAS sync error", e);
+                } finally { setSyncing(false); setStatusMsg(''); }
             };
 
             const handleContinue = () => {
@@ -134,13 +162,15 @@
 
             const todayTotal = useMemo(() => {
                 const today = getTodayStr();
-                return expenses.filter(e => e.date === today && e.currency === 'PHP').reduce((a, b) => a + Number(b.amount || 0), 0);
+                return expenses
+                    .filter(e => e.date === today && e.currency === 'PHP')
+                    .reduce((a, b) => a + Number(b.amount || 0), 0);
             }, [expenses]);
 
             return (
                 <div className="min-h-screen bg-[#0f172a] text-white flex flex-col overflow-hidden">
                     {/* Header */}
-                    <header className="p-6 flex justify-between items-center">
+                    <header className="p-6 flex justify-between items-center shrink-0">
                         <div>
                             <h1 className="text-xl font-black italic tracking-tighter uppercase">帥嘎的帳務記事本</h1>
                             <p className="text-[10px] font-bold text-indigo-400 tracking-widest opacity-70">V2.0 OFFICIAL FINAL</p>
@@ -160,23 +190,25 @@
                         </div>
                     )}
 
-                    {/* Main */}
+                    {/* Main Content */}
                     <main className="flex-1 px-5 space-y-8 overflow-y-auto no-scrollbar pb-32">
-                        <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-8 rounded-[3rem] shadow-2xl">
+                        <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-8 rounded-[3rem] shadow-2xl mt-4">
                             <div className="text-[10px] font-black uppercase tracking-widest opacity-70">今日總支出 (PHP)</div>
-                            <div className="text-5xl font-black mt-2 tracking-tighter">{todayTotal.toLocaleString()}</div>
+                            <div className="text-5xl font-black mt-2 tracking-tighter">
+                                {loading ? '...' : todayTotal.toLocaleString()}
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-3 gap-3">
-                            <button onClick={() => { setLastInputMode('camera'); setShowDrawer(true); fileInputRef.current.click(); }} className="bg-slate-800/80 p-5 rounded-3xl flex flex-col items-center gap-3 active:bg-emerald-600">
+                            <button onClick={() => { setLastInputMode('camera'); setShowDrawer(true); fileInputRef.current.click(); }} className="bg-slate-800/80 p-5 rounded-3xl flex flex-col items-center gap-3 active:scale-95 transition-transform active:bg-emerald-600">
                                 <Icon name="Camera" className="text-emerald-400 w-6 h-6" />
                                 <span className="text-[10px] font-black">AI 拍照</span>
                             </button>
-                            <button onClick={() => { setLastInputMode('manual'); setShowDrawer(true); }} className="bg-slate-800/80 p-5 rounded-3xl flex flex-col items-center gap-3">
+                            <button onClick={() => { setLastInputMode('manual'); setShowDrawer(true); }} className="bg-slate-800/80 p-5 rounded-3xl flex flex-col items-center gap-3 active:scale-95 transition-transform">
                                 <Icon name="Plus" className="text-slate-300 w-6 h-6" />
                                 <span className="text-[10px] font-black">手動</span>
                             </button>
-                            <button onClick={() => { setLastInputMode('voice'); setShowDrawer(true); recognitionRef.current?.start(); }} className={`p-5 rounded-3xl flex flex-col items-center gap-3 ${isListening ? 'bg-red-600 animate-pulse' : 'bg-slate-800'}`}>
+                            <button onClick={() => { setLastInputMode('voice'); setShowDrawer(true); recognitionRef.current?.start(); }} className={`p-5 rounded-3xl flex flex-col items-center gap-3 active:scale-95 transition-transform ${isListening ? 'bg-red-600 animate-pulse' : 'bg-slate-800'}`}>
                                 <Icon name="Mic" className="text-indigo-400 w-6 h-6" />
                                 <span className="text-[10px] font-black">語音</span>
                             </button>
@@ -184,58 +216,65 @@
 
                         <div className="space-y-4">
                             <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">最近紀錄</h3>
-                            {expenses.slice(0, 10).map(ex => (
-                                <div key={ex.id} className="bg-slate-800/40 p-5 rounded-3xl border border-white/5 flex justify-between items-center">
-                                    <div className="flex gap-4 items-center">
-                                        <div className="text-2xl">{ex.category === '食物' ? '🍱' : '💵'}</div>
-                                        <div>
-                                            <p className="font-black text-sm">{ex.merchant || ex.category}</p>
-                                            <p className="text-[9px] text-slate-500 font-bold uppercase">{ex.date}</p>
+                            {expenses.length === 0 ? (
+                                <div className="text-center py-10 opacity-30 text-xs font-bold uppercase tracking-widest">尚無資料</div>
+                            ) : (
+                                expenses.slice(0, 10).map(ex => (
+                                    <div key={ex.id} className="bg-slate-800/40 p-5 rounded-3xl border border-white/5 flex justify-between items-center">
+                                        <div className="flex gap-4 items-center">
+                                            <div className="text-2xl">{ex.category === '食物' ? '🍱' : '💵'}</div>
+                                            <div>
+                                                <p className="font-black text-sm">{ex.merchant || ex.category}</p>
+                                                <p className="text-[9px] text-slate-500 font-bold uppercase">{ex.date}</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="font-black text-red-400">-{Number(ex.amount).toLocaleString()}</p>
+                                            <p className="text-[8px] font-bold opacity-40">{ex.currency}</p>
                                         </div>
                                     </div>
-                                    <div className="text-right">
-                                        <p className="font-black text-red-400">-{Number(ex.amount).toLocaleString()}</p>
-                                        <p className="text-[8px] font-bold opacity-40">{ex.currency}</p>
-                                    </div>
-                                </div>
-                            ))}
+                                ))
+                            )}
                         </div>
                     </main>
 
                     {/* Footer Nav */}
-                    <nav className="fixed bottom-0 inset-x-0 p-6">
+                    <nav className="fixed bottom-0 inset-x-0 p-6 z-50">
                         <div className="bg-slate-900/90 backdrop-blur-xl rounded-[2.5rem] p-4 flex justify-around items-center border border-white/5 shadow-2xl">
                             <Icon name="Grid" className="text-indigo-400 w-6 h-6" />
-                            <button onClick={() => setShowDrawer(true)} className="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center -mt-12 border-4 border-[#0f172a] shadow-xl">
+                            <button onClick={() => setShowDrawer(true)} className="w-14 h-14 bg-indigo-600 rounded-full flex items-center justify-center -mt-12 border-4 border-[#0f172a] shadow-xl active:scale-90 transition-transform">
                                 <Icon name="Plus" className="text-white w-8 h-8" />
                             </button>
                             <Icon name="PieChart" className="text-slate-600 w-6 h-6" />
                         </div>
                     </nav>
 
-                    {/* Drawer */}
+                    {/* Edit Drawer */}
                     {showDrawer && (
                         <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-end">
-                            <div className="w-full bg-slate-900 rounded-t-[3rem] p-8 pb-12 animate-in slide-in-from-bottom">
+                            <div className="w-full bg-slate-900 rounded-t-[3rem] p-8 pb-12 animate-in slide-in-from-bottom duration-300">
                                 <div className="flex justify-between items-center mb-8">
                                     <h2 className="font-black uppercase tracking-widest text-indigo-400">編輯支出</h2>
-                                    <button onClick={() => {setShowDrawer(false); setIsListening(false);}} className="text-slate-500"><Icon name="X" className="w-6 h-6" /></button>
+                                    <button onClick={() => {setShowDrawer(false); setIsListening(false);}} className="text-slate-500 active:rotate-90 transition-transform"><Icon name="X" className="w-6 h-6" /></button>
                                 </div>
                                 <div className="space-y-6">
                                     <div className="border-b border-indigo-500/30 pb-4">
                                         <div className="flex items-center gap-4">
-                                            <input type="number" value={formData.amount} onChange={e=>setFormData({...formData, amount: e.target.value})} className="flex-1 bg-transparent text-6xl font-black outline-none tracking-tighter" placeholder="0" />
-                                            <select value={formData.currency} onChange={e=>setFormData({...formData, currency: e.target.value})} className="bg-indigo-600 p-2 rounded-xl text-xs font-black uppercase">{CURRENCIES.map(c=><option key={c} value={c}>{c}</option>)}</select>
+                                            <input type="number" inputMode="decimal" value={formData.amount} onChange={e=>setFormData({...formData, amount: e.target.value})} className="flex-1 bg-transparent text-6xl font-black outline-none tracking-tighter" placeholder="0" />
+                                            <select value={formData.currency} onChange={e=>setFormData({...formData, currency: e.target.value})} className="bg-indigo-600 p-2 rounded-xl text-xs font-black uppercase outline-none">{CURRENCIES.map(c=><option key={c} value={c}>{c}</option>)}</select>
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <select value={formData.category} onChange={e=>setFormData({...formData, category: e.target.value})} className="bg-slate-800 p-4 rounded-2xl text-sm font-bold border border-white/5">{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select>
-                                        <input type="date" value={formData.date} onChange={e=>setFormData({...formData, date: e.target.value})} className="bg-slate-800 p-4 rounded-2xl text-sm font-bold border border-white/5" />
+                                        <select value={formData.category} onChange={e=>setFormData({...formData, category: e.target.value})} className="bg-slate-800 p-4 rounded-2xl text-sm font-bold border border-white/5 outline-none">{CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}</select>
+                                        <input type="date" value={formData.date} onChange={e=>setFormData({...formData, date: e.target.value})} className="bg-slate-800 p-4 rounded-2xl text-sm font-bold border border-white/5 outline-none" />
                                     </div>
-                                    <input type="text" value={formData.merchant} onChange={e=>setFormData({...formData, merchant: e.target.value})} className="w-full bg-slate-800 p-4 rounded-2xl text-sm font-bold border border-white/5" placeholder="商家名稱" />
+                                    <input type="text" value={formData.merchant} onChange={e=>setFormData({...formData, merchant: e.target.value})} className="w-full bg-slate-800 p-4 rounded-2xl text-sm font-bold border border-white/5 outline-none" placeholder="商家名稱 / 備註" />
                                     <div className="flex gap-4">
-                                        <button onClick={() => recognitionRef.current?.start()} className={`w-16 h-16 rounded-2xl flex items-center justify-center ${isListening ? 'bg-red-600 animate-pulse' : 'bg-slate-800'}`}><Icon name="Mic" className="w-6 h-6" /></button>
-                                        <button onClick={() => autoSave(formData)} disabled={!formData.amount || syncing || loading} className="flex-1 bg-indigo-600 rounded-2xl font-black shadow-xl active:scale-95 disabled:opacity-50">儲存紀錄</button>
+                                        <button onClick={() => recognitionRef.current?.start()} className={`w-16 h-16 rounded-2xl flex items-center justify-center active:scale-95 transition-transform ${isListening ? 'bg-red-600 animate-pulse' : 'bg-slate-800'}`}><Icon name="Mic" className="w-6 h-6" /></button>
+                                        <button onClick={() => autoSave(formData)} disabled={!formData.amount || syncing || loading} className="flex-1 bg-indigo-600 rounded-2xl font-black shadow-xl active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2">
+                                            {(syncing || loading) && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>}
+                                            {syncing ? '同步中...' : '儲存紀錄'}
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -244,16 +283,17 @@
 
                     {/* Success Modal */}
                     {showConfirmModal && (
-                        <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-8">
-                            <div className="bg-slate-800 w-full max-w-xs rounded-[3rem] p-8 text-center space-y-6 border border-white/10">
+                        <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-8 backdrop-blur-md">
+                            <div className="bg-slate-800 w-full max-w-xs rounded-[3rem] p-8 text-center space-y-6 border border-white/10 shadow-2xl animate-in zoom-in duration-200">
                                 <div className="w-20 h-20 bg-emerald-500/20 text-emerald-500 rounded-full flex items-center justify-center mx-auto"><Icon name="CheckCircle" className="w-10 h-10" /></div>
                                 <h3 className="text-2xl font-black italic tracking-tighter">SUCCESS</h3>
-                                <button onClick={handleContinue} className="w-full py-5 bg-white text-slate-900 rounded-2xl font-black text-sm tracking-widest active:scale-95">繼續下一筆</button>
+                                <button onClick={handleContinue} className="w-full py-5 bg-white text-slate-900 rounded-2xl font-black text-sm tracking-widest active:scale-95 transition-transform">繼續下一筆</button>
                                 <button onClick={() => {setShowConfirmModal(false); setShowDrawer(false);}} className="w-full py-4 text-slate-500 text-xs font-bold uppercase tracking-widest">回到首頁</button>
                             </div>
                         </div>
                     )}
 
+                    {/* Hidden Camera Input */}
                     <input type="file" ref={fileInputRef} className="hidden" accept="image/*" capture="environment" onChange={(e) => {
                         const file = e.target.files[0];
                         if (file) {
